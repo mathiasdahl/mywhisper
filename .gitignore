@@ -1,0 +1,6 @@
+/target
+.env
+.env.*
+mywhisper.txt
+*.exe
+*.pdb
