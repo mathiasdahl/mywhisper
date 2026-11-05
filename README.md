@@ -59,3 +59,17 @@ cargo build --release
 ```
 
 Share `target\release\mywhisper.exe` with others; they still need their own `OPENROUTER_API_KEY`.
+
+## Security & privacy
+
+This is a convenience recorder, not a certified confidential transcription product. Before you record anything sensitive, skim the points below.
+
+- **API key** — Set `OPENROUTER_API_KEY` in your environment (or another secret store you trust). Do not commit it; the repo ignores `.env` and similar files.
+- **Cloud transcription** — When you send a recording, the **WAV is uploaded to [OpenRouter](https://openrouter.ai/)** for Whisper. Follow your organization’s rules on third-party APIs and data you are allowed to send off the machine.
+- **Local copies** — Every run saves matching `.wav` and `.txt` files under `%LOCALAPPDATA%\mywhisper\recordings\`. They remain on disk until you delete them; backup or sync software may copy that folder.
+- **Clipboard and stdout** — Transcripts can go to the clipboard or stdout. Other tools, logs, or people with access to your session are outside this app’s control.
+- **stderr** — Status output can include your **microphone device name** and cost estimates. That stays on your machine but may show up in terminal recordings or shared screens.
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE).
