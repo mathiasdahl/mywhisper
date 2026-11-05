@@ -51,14 +51,20 @@ With `-y`, use `--stdout` and/or `--clipboard` to choose output channels (stdout
 
 Recordings and transcripts are always saved under `%LOCALAPPDATA%\\mywhisper\\recordings\\` as matching timestamped `.wav` and `.txt` files. Status and cost estimates go to **stderr**.
 
-## Release binary
+## Releases
+
+Pre-built Windows binaries are on [GitHub Releases](https://github.com/mathiasdahl/mywhisper/releases). Download `mywhisper-windows-x64.zip`, extract `mywhisper.exe`, set `OPENROUTER_API_KEY`, and run.
+
+Each release lists a SHA256 checksum for the zip file.
+
+## Build from source
 
 ```powershell
 cargo build --release
 # optional: strip target\release\mywhisper.exe
 ```
 
-Share `target\release\mywhisper.exe` with others; they still need their own `OPENROUTER_API_KEY`.
+Colleagues can also build locally; everyone needs their own `OPENROUTER_API_KEY`.
 
 ## Security & privacy
 

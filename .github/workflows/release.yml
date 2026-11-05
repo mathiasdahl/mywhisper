@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $dest = "target/release/mywhisper-windows-x64.zip"
+          if (Test-Path $dest) { Remove-Item $dest }
+          Compress-Archive -Path target/release/mywhisper.exe -DestinationPath $dest
+
+      - name: SHA256 checksum
+        id: checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash target/release/mywhisper-windows-x64.zip -Algorithm SHA256).Hash
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: target/release/mywhisper-windows-x64.zip
+          body: |
+            ## Windows (x64)
+
+            1. Download **mywhisper-windows-x64.zip** below and extract `mywhisper.exe`.
+            2. Set your [OpenRouter](https://openrouter.ai/) API key:
+               ```powershell
+               $env:OPENROUTER_API_KEY = "sk-or-v1-..."
+               ```
+            3. Run `mywhisper.exe` (see [README](https://github.com/mathiasdahl/mywhisper#mywhisper) for flags and privacy notes).
+
+            **SHA256 (`mywhisper-windows-x64.zip`):** `${{ steps.checksum.outputs.sha256 }}`
