@@ -27,6 +27,8 @@ cargo run
 | `-l`, `--language <code>` | Language hint (ISO-639-1, e.g. `en`) |
 | `-i`, `--immediate` | Start recording as soon as the program is ready |
 | `-y`, `--auto-send` | Transcribe immediately when recording stops |
+| `--stdout` | Write transcript to stdout (default if no output flags) |
+| `--clipboard` | Copy transcript to the Windows clipboard |
 
 Example: hands-off capture and transcription:
 
@@ -43,8 +45,11 @@ cargo run -- -i -y
 | While recording | **Space** — pause / resume |
 | After recording | **Enter** — send for transcription |
 | After recording | **Esc** — discard |
+| After transcription (without `-y`) | **s** — stdout · **c** — clipboard · **q** / **Esc** — no output |
 
-Transcript text is printed on **stdout**; status and cost estimates go to **stderr**.
+With `-y`, use `--stdout` and/or `--clipboard` to choose output channels (stdout is the default when neither flag is given).
+
+Recordings and transcripts are always saved under `%LOCALAPPDATA%\\mywhisper\\recordings\\` as matching timestamped `.wav` and `.txt` files. Status and cost estimates go to **stderr**.
 
 ## Release binary
 

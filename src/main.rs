@@ -1,6 +1,10 @@
+mod logging;
+mod output;
+
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use clap::Parser;
+use output::{InteractiveOutput, OutputChannels};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Sample, SampleFormat, SupportedStreamConfig};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -32,6 +36,14 @@ struct Cli {
     /// Transcribe as soon as recording stops (skip confirm prompt)
     #[arg(short = 'y', long)]
     auto_send: bool,
+
+    /// Write transcript to stdout (default when no output flags are given)
+    #[arg(long)]
+    stdout: bool,
+
+    /// Copy transcript to the Windows clipboard
+    #[arg(long)]
+    clipboard: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,6 +58,7 @@ fn main() -> Result<()> {
         .context("OPENROUTER_API_KEY environment variable is not set")?;
 
     let wav_bytes = record_wav(cli.immediate)?;
+    let session = logging::SessionLog::save_recording(&wav_bytes)?;
     let duration = wav_duration_secs(&wav_bytes)?;
     let usd = duration * USD_PER_SECOND;
     let sek = usd * SEK_PER_USD;
@@ -69,7 +82,17 @@ fn main() -> Result<()> {
         eprintln!("Sending to OpenRouter…");
     }
     let text = transcribe(&wav_bytes, &api_key, cli.language.as_deref())?;
-    println!("{text}");
+    session.save_transcript(&text)?;
+
+    let channels = OutputChannels::from_cli(cli.stdout, cli.clipboard);
+    if cli.auto_send {
+        channels.deliver(&text)?;
+    } else {
+        match output::prompt_output_channel(&text)? {
+            InteractiveOutput::Channels(choice) => choice.deliver(&text)?,
+            InteractiveOutput::None => eprintln!("No output channel selected."),
+        }
+    }
     Ok(())
 }
 
