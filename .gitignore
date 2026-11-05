@@ -4,3 +4,14 @@
 mywhisper.txt
 *.exe
 *.pdb
+
+# Editor / OS junk
+*~
+*.swp
+*.swo
+\#*\#
+.#*
+.DS_Store
+Thumbs.db
+desktop.ini
+Desktop.ini
