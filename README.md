@@ -36,6 +36,24 @@ Example: hands-off capture and transcription:
 cargo run -- -i -y
 ```
 
+### Quick launch (Windows)
+
+Pin a small terminal window on the taskbar and start mywhisper with **Win** + **1**–**9** (slot number).
+
+1. Create a shortcut on your desktop.
+2. Set **Target** (adjust the path; requires [Windows Terminal](https://apps.microsoft.com/store/detail/windows-terminal/9N0DX20HK701)):
+
+   ```text
+   wt.exe -w -1 --size 120,10 --pos 500,500 C:\path\to\mywhisper.exe
+   ```
+
+   Append flags after the exe if you like, e.g. `-i -y` for immediate record and auto-transcribe.
+
+3. Drag the shortcut to the taskbar in slot **1**–**9** (only those slots get **Win** + number).
+4. Press **Win** + that number to open mywhisper.
+
+Set `OPENROUTER_API_KEY` in your user environment (see [Setup](#setup)) so the shortcut inherits it.
+
 ## Controls (interactive mode)
 
 | When | Key |
@@ -56,6 +74,20 @@ Recordings and transcripts are always saved under `%LOCALAPPDATA%\\mywhisper\\re
 Pre-built Windows binaries are on [GitHub Releases](https://github.com/mathiasdahl/mywhisper/releases). Download `mywhisper-windows-x64.zip`, extract `mywhisper.exe`, set `OPENROUTER_API_KEY`, and run.
 
 Each release lists a SHA256 checksum for the zip file.
+
+### Publishing a release
+
+After your changes are on `main`:
+
+1. Optionally bump `version` in `Cargo.toml` so the tag matches what you ship.
+2. Create and push a version tag (`v*` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml)):
+
+```powershell
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+GitHub Actions builds `mywhisper.exe`, uploads `mywhisper-windows-x64.zip`, and opens a release with a SHA256 checksum. Share the [releases](https://github.com/mathiasdahl/mywhisper/releases) page with colleagues—no need to email the binary.
 
 ## Build from source
 
