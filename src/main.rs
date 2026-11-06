@@ -15,12 +15,13 @@ use std::io::{self, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const OPENROUTER_TRANSCRIBE_URL: &str = "https://openrouter.ai/api/v1/audio/transcriptions";
 const MODEL: &str = "openai/whisper-large-v3-turbo";
 const USD_PER_SECOND: f64 = 0.000003;
 const SEK_PER_USD: f64 = 10.0;
+const DEFAULT_DRY_RUN_TEXT: &str = "[dry-run] Mock transcript for UI testing.";
 
 #[derive(Parser, Debug)]
 #[command(name = "mywhisper", about = "Record voice and transcribe with Whisper via OpenRouter")]
@@ -44,6 +45,14 @@ struct Cli {
     /// Copy transcript to the Windows clipboard
     #[arg(long)]
     clipboard: bool,
+
+    /// Skip recording and API; use mock text to test output channels and prompts (no API key)
+    #[arg(long)]
+    dry_run: bool,
+
+    /// Transcript text when using --dry-run
+    #[arg(long, value_name = "TEXT")]
+    dry_run_text: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -54,38 +63,72 @@ struct TranscriptionResponse {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let api_key = std::env::var("OPENROUTER_API_KEY")
-        .context("OPENROUTER_API_KEY environment variable is not set")?;
+    let text = if cli.dry_run {
+        eprintln!("Dry-run: no recording, no API call.");
 
-    let wav_bytes = record_wav(cli.immediate)?;
-    let session = logging::SessionLog::save_recording(&wav_bytes)?;
-    let duration = wav_duration_secs(&wav_bytes)?;
-    let usd = duration * USD_PER_SECOND;
-    let sek = usd * SEK_PER_USD;
-
-    eprintln!();
-    eprintln!("Recording length: {}", format_duration(duration));
-    eprintln!(
-        "Estimated transcription cost: {} ({})",
-        format_sek(sek),
-        format_usd(usd)
-    );
-
-    if cli.auto_send {
-        eprintln!("Sending to OpenRouter…");
-    } else {
-        eprintln!("Press Enter to transcribe, Escape to discard.");
-        if !wait_enter_or_escape()? {
-            eprintln!("Discarded without sending.");
-            return Ok(());
+        if !cli.auto_send {
+            dry_run_recording_phase(cli.immediate)?;
         }
-        eprintln!("Sending to OpenRouter…");
-    }
-    let text = transcribe(&wav_bytes, &api_key, cli.language.as_deref())?;
-    session.save_transcript(&text)?;
+
+        if cli.auto_send {
+            eprintln!("Dry-run: skipping API call…");
+        } else {
+            eprintln!("Press Enter to transcribe, Escape to discard.");
+            if !wait_enter_or_escape()? {
+                eprintln!("Discarded without sending.");
+                return Ok(());
+            }
+            eprintln!("Dry-run: skipping API call…");
+        }
+
+        {
+            let s = cli
+                .dry_run_text
+                .as_deref()
+                .unwrap_or(DEFAULT_DRY_RUN_TEXT)
+                .trim();
+            if s.is_empty() {
+                DEFAULT_DRY_RUN_TEXT.to_string()
+            } else {
+                s.to_string()
+            }
+        }
+    } else {
+        let api_key = std::env::var("OPENROUTER_API_KEY")
+            .context("OPENROUTER_API_KEY environment variable is not set")?;
+
+        let wav_bytes = record_wav(cli.immediate)?;
+        let session = logging::SessionLog::save_recording(&wav_bytes)?;
+        let duration = wav_duration_secs(&wav_bytes)?;
+        let usd = duration * USD_PER_SECOND;
+        let sek = usd * SEK_PER_USD;
+
+        eprintln!();
+        eprintln!("Recording length: {}", format_duration(duration));
+        eprintln!(
+            "Estimated transcription cost: {} ({})",
+            format_sek(sek),
+            format_usd(usd)
+        );
+
+        if cli.auto_send {
+            eprintln!("Sending to OpenRouter…");
+        } else {
+            eprintln!("Press Enter to transcribe, Escape to discard.");
+            if !wait_enter_or_escape()? {
+                eprintln!("Discarded without sending.");
+                return Ok(());
+            }
+            eprintln!("Sending to OpenRouter…");
+        }
+        let text = transcribe(&wav_bytes, &api_key, cli.language.as_deref())?;
+        session.save_transcript(&text)?;
+        text
+    };
 
     let channels = OutputChannels::from_cli(cli.stdout, cli.clipboard);
-    if cli.auto_send {
+    let output_channels_explicit = cli.stdout || cli.clipboard;
+    if cli.auto_send || output_channels_explicit {
         channels.deliver(&text)?;
     } else {
         match output::prompt_output_channel(&text)? {
@@ -161,6 +204,100 @@ fn read_enter_or_escape_loop() -> Result<bool> {
 fn run_recording_controls(paused: Arc<AtomicBool>) -> Result<()> {
     enable_raw_mode().context("failed to enable raw terminal mode")?;
     let result = recording_control_loop(&paused);
+    disable_raw_mode().context("failed to disable raw terminal mode")?;
+    result
+}
+
+/// Simulates the pre-record and record UX without a microphone (dry-run only).
+fn dry_run_recording_phase(immediate: bool) -> Result<()> {
+    eprintln!("Dry-run: no microphone (simulated).");
+
+    if immediate {
+        eprintln!("Ready — dry-run recording now. Esc stop · Enter or Space pause/unpause");
+    } else {
+        eprintln!("Controls: Enter start · Esc stop · Enter or Space pause/unpause");
+        wait_enter_prompt("Press Enter to start recording… ")?;
+    }
+
+    eprintln!("Dry-run recording… Esc to stop · Enter or Space to pause/unpause");
+
+    struct ActiveTimer {
+        paused: bool,
+        active_elapsed: Duration,
+        segment_start: Instant,
+    }
+
+    impl ActiveTimer {
+        fn new() -> Self {
+            Self {
+                paused: false,
+                active_elapsed: Duration::ZERO,
+                segment_start: Instant::now(),
+            }
+        }
+
+        fn active_secs(&self) -> f64 {
+            let active = if self.paused {
+                self.active_elapsed
+            } else {
+                self.active_elapsed + self.segment_start.elapsed()
+            };
+            active.as_secs_f64()
+        }
+
+        fn toggle_pause(&mut self) {
+            let now = Instant::now();
+            if self.paused {
+                self.segment_start = now;
+                self.paused = false;
+            } else {
+                self.active_elapsed += now.duration_since(self.segment_start);
+                self.paused = true;
+            }
+        }
+    }
+
+    let mut timer = ActiveTimer::new();
+    let mut last_whole_sec: Option<u64> = None;
+
+    enable_raw_mode().context("failed to enable raw terminal mode")?;
+    let result = (|| -> Result<()> {
+        loop {
+            let secs = timer.active_secs();
+            let whole = secs.floor() as u64;
+            if !timer.paused && last_whole_sec != Some(whole) {
+                last_whole_sec = Some(whole);
+                eprintln!(
+                    "Dry-run · {} elapsed · Esc stop · Enter/Space pause",
+                    format_duration(secs)
+                );
+            }
+
+            if event::poll(Duration::from_millis(50)).context("failed to poll keyboard")? {
+                if let Event::Key(key) = event::read().context("failed to read keyboard event")? {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    match key.code {
+                        KeyCode::Esc => break,
+                        KeyCode::Enter | KeyCode::Char(' ') => {
+                            timer.toggle_pause();
+                            if timer.paused {
+                                eprintln!(
+                                    "Paused · {}",
+                                    format_duration(timer.active_secs())
+                                );
+                            } else {
+                                eprintln!("Resumed");
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Ok(())
+    })();
     disable_raw_mode().context("failed to disable raw terminal mode")?;
     result
 }

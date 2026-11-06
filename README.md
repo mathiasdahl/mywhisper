@@ -6,7 +6,7 @@ Record voice from your microphone and transcribe it with [OpenAI Whisper Large V
 
 - Rust (see `rust-toolchain.toml`)
 - Windows microphone access
-- An [OpenRouter](https://openrouter.ai/) API key
+- An [OpenRouter](https://openrouter.ai/) API key (not needed for `--dry-run`)
 
 ## Setup
 
@@ -29,11 +29,27 @@ cargo run
 | `-y`, `--auto-send` | Transcribe immediately when recording stops |
 | `--stdout` | Write transcript to stdout (default if no output flags) |
 | `--clipboard` | Copy transcript to the Windows clipboard |
+| `--dry-run` | No mic and no API; simulates record (Enter to start, Esc to stop, Enter/Space pause) and uses mock text for the rest (no `OPENROUTER_API_KEY`) |
+| `--dry-run-text <TEXT>` | Transcript text for `--dry-run` (default: `[dry-run] Mock transcript for UI testing.`) |
 
 Example: hands-off capture and transcription:
 
 ```powershell
 cargo run -- -i -y
+```
+
+Example: test record timing, pause, and output flow without a mic or credits:
+
+```powershell
+cargo run -- --dry-run
+```
+
+After **Enter** to start, stderr shows an elapsed timer while “recording”; **Esc** stops, then **Enter** continues to mock transcription (same as a real run).
+
+Use `-y` to skip the Enter/Escape confirm and go straight to the output channel step:
+
+```powershell
+cargo run -- --dry-run -y
 ```
 
 ### Quick launch (Windows)
@@ -65,9 +81,11 @@ Set `OPENROUTER_API_KEY` in your user environment (see [Setup](#setup)) so the s
 | After recording | **Esc** — discard |
 | After transcription (without `-y`) | **s** — stdout · **c** — clipboard · **q** / **Esc** — no output |
 
-With `-y`, use `--stdout` and/or `--clipboard` to choose output channels (stdout is the default when neither flag is given).
+Use `--stdout` and/or `--clipboard` to choose output channels without the **s** / **c** / **q** prompt (stdout is the default when neither flag is given). With `-y` and no output flags, delivery uses that same default and skips the prompt as well.
 
-Recordings and transcripts are always saved under `%LOCALAPPDATA%\\mywhisper\\recordings\\` as matching timestamped `.wav` and `.txt` files. Status and cost estimates go to **stderr**.
+**`--dry-run` (without `-y`):** Same as a normal run for **Enter** to start and **Esc** to stop the fake recording. While “recording”, **Enter** or **Space** toggles pause (the timer pauses); stderr prints elapsed time about once per second. With `--dry-run -i`, the simulated recording starts immediately (no initial Enter).
+
+Recordings and transcripts are always saved under `%LOCALAPPDATA%\\mywhisper\\recordings\\` as matching timestamped `.wav` and `.txt` files (normal runs only; `--dry-run` does not write files). Status and cost estimates go to **stderr**.
 
 ## Releases
 
