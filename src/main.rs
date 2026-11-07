@@ -1,21 +1,22 @@
 mod logging;
 mod output;
+mod term;
 
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use clap::Parser;
-use output::{InteractiveOutput, OutputChannels};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Sample, SampleFormat, SupportedStreamConfig};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use hound::{SampleFormat as WavSampleFormat, WavSpec, WavWriter};
+use output::{InteractiveOutput, OutputChannels};
 use serde::Deserialize;
 use std::io::{self, Write};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex};
 use std::time::{Duration, Instant};
+use term::{RawModeGuard, exit_on_ctrl_c, rawln};
 
 const OPENROUTER_TRANSCRIBE_URL: &str = "https://openrouter.ai/api/v1/audio/transcriptions";
 const MODEL: &str = "openai/whisper-large-v3-turbo";
@@ -24,7 +25,10 @@ const SEK_PER_USD: f64 = 10.0;
 const DEFAULT_DRY_RUN_TEXT: &str = "[dry-run] Mock transcript for UI testing.";
 
 #[derive(Parser, Debug)]
-#[command(name = "mywhisper", about = "Record voice and transcribe with Whisper via OpenRouter")]
+#[command(
+    name = "mywhisper",
+    about = "Record voice and transcribe with Whisper via OpenRouter"
+)]
 struct Cli {
     /// ISO-639-1 language hint (optional; auto-detected if omitted)
     #[arg(short, long)]
@@ -42,7 +46,7 @@ struct Cli {
     #[arg(long)]
     stdout: bool,
 
-    /// Copy transcript to the Windows clipboard
+    /// Copy transcript to the system clipboard
     #[arg(long)]
     clipboard: bool,
 
@@ -178,10 +182,8 @@ fn wait_enter_prompt(message: &str) -> Result<()> {
 }
 
 fn wait_enter_or_escape() -> Result<bool> {
-    enable_raw_mode().context("failed to enable raw terminal mode")?;
-    let result = read_enter_or_escape_loop();
-    disable_raw_mode().context("failed to disable raw terminal mode")?;
-    result
+    let _raw = RawModeGuard::new()?;
+    read_enter_or_escape_loop()
 }
 
 fn read_enter_or_escape_loop() -> Result<bool> {
@@ -191,6 +193,7 @@ fn read_enter_or_escape_loop() -> Result<bool> {
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
+                exit_on_ctrl_c(&key);
                 match key.code {
                     KeyCode::Enter => return Ok(true),
                     KeyCode::Esc => return Ok(false),
@@ -202,10 +205,8 @@ fn read_enter_or_escape_loop() -> Result<bool> {
 }
 
 fn run_recording_controls(paused: Arc<AtomicBool>) -> Result<()> {
-    enable_raw_mode().context("failed to enable raw terminal mode")?;
-    let result = recording_control_loop(&paused);
-    disable_raw_mode().context("failed to disable raw terminal mode")?;
-    result
+    let _raw = RawModeGuard::new()?;
+    recording_control_loop(&paused)
 }
 
 /// Simulates the pre-record and record UX without a microphone (dry-run only).
@@ -260,50 +261,44 @@ fn dry_run_recording_phase(immediate: bool) -> Result<()> {
     let mut timer = ActiveTimer::new();
     let mut last_whole_sec: Option<u64> = None;
 
-    enable_raw_mode().context("failed to enable raw terminal mode")?;
-    let result = (|| -> Result<()> {
-        loop {
-            let secs = timer.active_secs();
-            let whole = secs.floor() as u64;
-            if !timer.paused && last_whole_sec != Some(whole) {
-                last_whole_sec = Some(whole);
-                eprintln!(
-                    "Dry-run · {} elapsed · Esc stop · Enter/Space pause",
-                    format_duration(secs)
-                );
-            }
+    let _raw = RawModeGuard::new()?;
+    loop {
+        let secs = timer.active_secs();
+        let whole = secs.floor() as u64;
+        if !timer.paused && last_whole_sec != Some(whole) {
+            last_whole_sec = Some(whole);
+            rawln!(
+                "Dry-run · {} elapsed · Esc stop · Enter/Space pause",
+                format_duration(secs)
+            );
+        }
 
-            if event::poll(Duration::from_millis(50)).context("failed to poll keyboard")? {
-                if let Event::Key(key) = event::read().context("failed to read keyboard event")? {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
-                    }
-                    match key.code {
-                        KeyCode::Esc => break,
-                        KeyCode::Enter | KeyCode::Char(' ') => {
-                            timer.toggle_pause();
-                            if timer.paused {
-                                eprintln!(
-                                    "Paused · {}",
-                                    format_duration(timer.active_secs())
-                                );
-                            } else {
-                                eprintln!("Resumed");
-                            }
+        if event::poll(Duration::from_millis(50)).context("failed to poll keyboard")? {
+            if let Event::Key(key) = event::read().context("failed to read keyboard event")? {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                exit_on_ctrl_c(&key);
+                match key.code {
+                    KeyCode::Esc => break,
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        timer.toggle_pause();
+                        if timer.paused {
+                            rawln!("Paused · {}", format_duration(timer.active_secs()));
+                        } else {
+                            rawln!("Resumed");
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
         }
-        Ok(())
-    })();
-    disable_raw_mode().context("failed to disable raw terminal mode")?;
-    result
+    }
+    Ok(())
 }
 
 fn recording_control_loop(paused: &Arc<AtomicBool>) -> Result<()> {
-    eprintln!("Recording… Enter or Escape to stop · Space to pause/unpause");
+    rawln!("Recording… Enter or Escape to stop · Space to pause/unpause");
 
     loop {
         if event::poll(Duration::from_millis(50)).context("failed to poll keyboard")? {
@@ -311,15 +306,16 @@ fn recording_control_loop(paused: &Arc<AtomicBool>) -> Result<()> {
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
+                exit_on_ctrl_c(&key);
                 match key.code {
                     KeyCode::Enter | KeyCode::Esc => break,
                     KeyCode::Char(' ') => {
                         let now_paused = !paused.load(Ordering::Relaxed);
                         paused.store(now_paused, Ordering::Relaxed);
                         if now_paused {
-                            eprintln!("Paused");
+                            rawln!("Paused");
                         } else {
-                            eprintln!("Resumed");
+                            rawln!("Resumed");
                         }
                     }
                     _ => {}
@@ -374,6 +370,13 @@ fn record_wav(start_immediately: bool) -> Result<Vec<u8>> {
     if samples.is_empty() {
         bail!("no audio captured; check microphone permissions and input level");
     }
+    // macOS delivers all-zero buffers (not an error) when the terminal lacks mic permission.
+    if samples.iter().all(|s| s.abs() <= f32::EPSILON) {
+        bail!(
+            "microphone input was completely silent; on macOS, allow your terminal app under \
+             System Settings › Privacy & Security › Microphone"
+        );
+    }
 
     encode_wav(&samples, sample_rate, channels)
 }
@@ -406,10 +409,8 @@ fn build_input_stream(
             device.build_input_stream(
                 &stream_config,
                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    let chunk: Vec<f32> = data
-                        .iter()
-                        .map(|&s| Sample::to_sample::<f32>(s))
-                        .collect();
+                    let chunk: Vec<f32> =
+                        data.iter().map(|&s| Sample::to_sample::<f32>(s)).collect();
                     append_samples(&chunk, &samples, &paused);
                 },
                 err_fn,
@@ -421,10 +422,8 @@ fn build_input_stream(
             device.build_input_stream(
                 &stream_config,
                 move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                    let chunk: Vec<f32> = data
-                        .iter()
-                        .map(|&s| Sample::to_sample::<f32>(s))
-                        .collect();
+                    let chunk: Vec<f32> =
+                        data.iter().map(|&s| Sample::to_sample::<f32>(s)).collect();
                     append_samples(&chunk, &samples, &paused);
                 },
                 err_fn,
@@ -456,7 +455,8 @@ fn encode_wav(samples: &[f32], sample_rate: u32, channels: u16) -> Result<Vec<u8
             bits_per_sample: 16,
             sample_format: WavSampleFormat::Int,
         };
-        let mut writer = WavWriter::new(&mut cursor, spec).context("failed to create WAV writer")?;
+        let mut writer =
+            WavWriter::new(&mut cursor, spec).context("failed to create WAV writer")?;
         for &sample in samples {
             let clamped = sample.clamp(-1.0, 1.0);
             let int_sample = (clamped * i16::MAX as f32) as i16;

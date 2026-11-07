@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use arboard::Clipboard;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use std::time::Duration;
+
+use crate::term::{RawModeGuard, exit_on_ctrl_c};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OutputChannels {
@@ -51,10 +52,8 @@ pub fn prompt_output_channel(text: &str) -> Result<InteractiveOutput> {
     eprintln!("------------------");
     eprintln!("s — stdout · c — clipboard · q/Esc — quit without output");
 
-    enable_raw_mode().context("failed to enable raw terminal mode")?;
-    let choice = read_output_channel_choice();
-    disable_raw_mode().context("failed to disable raw terminal mode")?;
-    choice
+    let _raw = RawModeGuard::new()?;
+    read_output_channel_choice()
 }
 
 fn read_output_channel_choice() -> Result<InteractiveOutput> {
@@ -64,6 +63,7 @@ fn read_output_channel_choice() -> Result<InteractiveOutput> {
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
+                exit_on_ctrl_c(&key);
                 return Ok(match key.code {
                     KeyCode::Char('s') | KeyCode::Char('S') => {
                         InteractiveOutput::Channels(OutputChannels {
