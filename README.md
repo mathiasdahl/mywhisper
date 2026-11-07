@@ -4,6 +4,12 @@
 
 There is no graphical window—everything happens in the terminal, with keyboard shortcuts for record/stop/send. For day-to-day use, most people pin a **Windows Terminal shortcut** on the taskbar and launch mywhisper with **Win** + a number (see [Quick launch without a GUI](#quick-launch-without-a-gui)).
 
+### Background
+
+You can already dictate in Claude, Cursor, VS Code, and Windows—but those flows are someone else’s product. **mywhisper** exists because I wanted something I control end to end: what gets recorded, where audio is stored, when it is sent for transcription, and what happens to the text afterward (stdout, clipboard, files under `%LOCALAPPDATA%`). It is a small CLI I can wire into shortcuts and scripts without a GUI or vendor dictation UI.
+
+Running it is inexpensive. OpenRouter bills Whisper Large V3 Turbo at **$0.000003 per second** of audio (~**$0.011/hour**). If you transcribed **eight hours of speech every weekday** (~22 days), that is about **$1.90/month** in API cost; eight hours **every day** for a 30-day month is roughly **$2.60**. Real dictation is usually a fraction of that unless you are recording continuously. The program prints an estimated cost on stderr after each clip (same rate as above).
+
 ---
 
 ## Quick start (users)
