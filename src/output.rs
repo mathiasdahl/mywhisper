@@ -1,3 +1,4 @@
+use crate::console::Console;
 use anyhow::{Context, Result};
 use arboard::Clipboard;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -25,14 +26,14 @@ impl OutputChannels {
         }
     }
 
-    pub fn deliver(&self, text: &str) -> Result<()> {
+    pub fn deliver(&self, text: &str, console: Console) -> Result<()> {
         if self.stdout {
             println!("{text}");
         }
         if self.clipboard {
             copy_to_clipboard(text)?;
             if !self.stdout {
-                eprintln!("Copied to clipboard.");
+                console.copied_clipboard();
             }
         }
         Ok(())
@@ -44,12 +45,12 @@ pub enum InteractiveOutput {
     None,
 }
 
-pub fn prompt_output_channel(text: &str) -> Result<InteractiveOutput> {
-    eprintln!();
-    eprintln!("--- Transcript ---");
-    eprintln!("{text}");
-    eprintln!("------------------");
-    eprintln!("s — stdout · c — clipboard · q/Esc — quit without output");
+pub fn prompt_output_channel(text: &str, console: Console) -> Result<InteractiveOutput> {
+    console.blank_line();
+    console.transcript_frame_top();
+    console.transcript_body(text);
+    console.transcript_frame_bottom();
+    console.output_menu();
 
     enable_raw_mode().context("failed to enable raw terminal mode")?;
     let choice = read_output_channel_choice();

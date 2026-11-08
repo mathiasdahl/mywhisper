@@ -1,7 +1,9 @@
+mod console;
 mod logging;
 mod output;
 
 use anyhow::{Context, Result, bail};
+use console::{ColorMode, Console};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use clap::Parser;
 use output::{InteractiveOutput, OutputChannels};
@@ -53,6 +55,10 @@ struct Cli {
     /// Transcript text when using --dry-run
     #[arg(long, value_name = "TEXT")]
     dry_run_text: Option<String>,
+
+    /// When to color stderr: auto (TTY), always, or never
+    #[arg(long, value_enum, default_value_t = ColorMode::Auto)]
+    color: ColorMode,
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,23 +68,24 @@ struct TranscriptionResponse {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let console = Console::from_mode(cli.color);
 
     let text = if cli.dry_run {
-        eprintln!("Dry-run: no recording, no API call.");
+        console.dry_run("no recording, no API call.");
 
         if !cli.auto_send {
-            dry_run_recording_phase(cli.immediate)?;
+            dry_run_recording_phase(cli.immediate, console)?;
         }
 
         if cli.auto_send {
-            eprintln!("Dry-run: skipping API call…");
+            console.dry_run("skipping API call…");
         } else {
-            eprintln!("Press Enter to transcribe, Escape to discard.");
+            console.prompt("Press Enter to transcribe, Escape to discard.");
             if !wait_enter_or_escape()? {
-                eprintln!("Discarded without sending.");
+                console.neutral("Discarded without sending.");
                 return Ok(());
             }
-            eprintln!("Dry-run: skipping API call…");
+            console.dry_run("skipping API call…");
         }
 
         {
@@ -97,43 +104,42 @@ fn main() -> Result<()> {
         let api_key = std::env::var("OPENROUTER_API_KEY")
             .context("OPENROUTER_API_KEY environment variable is not set")?;
 
-        let wav_bytes = record_wav(cli.immediate)?;
-        let session = logging::SessionLog::save_recording(&wav_bytes)?;
+        let wav_bytes = record_wav(cli.immediate, console)?;
+        let session = logging::SessionLog::save_recording(&wav_bytes, console)?;
         let duration = wav_duration_secs(&wav_bytes)?;
         let usd = duration * USD_PER_SECOND;
         let sek = usd * SEK_PER_USD;
 
-        eprintln!();
-        eprintln!("Recording length: {}", format_duration(duration));
-        eprintln!(
-            "Estimated transcription cost: {} ({})",
-            format_sek(sek),
-            format_usd(usd)
+        console.blank_line();
+        console.metric(
+            "Recording length:",
+            &format_duration(duration),
         );
+        console.metric_cost(&format_sek(sek), &format!("({})", format_usd(usd)));
 
         if cli.auto_send {
-            eprintln!("Sending to OpenRouter…");
+            console.active("Sending to OpenRouter…", None);
         } else {
-            eprintln!("Press Enter to transcribe, Escape to discard.");
+            console.prompt("Press Enter to transcribe, Escape to discard.");
             if !wait_enter_or_escape()? {
-                eprintln!("Discarded without sending.");
+                console.neutral("Discarded without sending.");
                 return Ok(());
             }
-            eprintln!("Sending to OpenRouter…");
+            console.active("Sending to OpenRouter…", None);
         }
         let text = transcribe(&wav_bytes, &api_key, cli.language.as_deref())?;
-        session.save_transcript(&text)?;
+        session.save_transcript(&text, console)?;
         text
     };
 
     let channels = OutputChannels::from_cli(cli.stdout, cli.clipboard);
     let output_channels_explicit = cli.stdout || cli.clipboard;
     if cli.auto_send || output_channels_explicit {
-        channels.deliver(&text)?;
+        channels.deliver(&text, console)?;
     } else {
-        match output::prompt_output_channel(&text)? {
-            InteractiveOutput::Channels(choice) => choice.deliver(&text)?,
-            InteractiveOutput::None => eprintln!("No output channel selected."),
+        match output::prompt_output_channel(&text, console)? {
+            InteractiveOutput::Channels(choice) => choice.deliver(&text, console)?,
+            InteractiveOutput::None => console.neutral("No output channel selected."),
         }
     }
     Ok(())
@@ -167,8 +173,8 @@ fn format_sek(amount: f64) -> String {
     }
 }
 
-fn wait_enter_prompt(message: &str) -> Result<()> {
-    eprint!("{message}");
+fn wait_enter_prompt(message: &str, console: Console) -> Result<()> {
+    console.write_prompt(message)?;
     io::stderr().flush()?;
     let mut line = String::new();
     io::stdin()
@@ -201,25 +207,28 @@ fn read_enter_or_escape_loop() -> Result<bool> {
     }
 }
 
-fn run_recording_controls(paused: Arc<AtomicBool>) -> Result<()> {
+fn run_recording_controls(paused: Arc<AtomicBool>, console: Console) -> Result<()> {
     enable_raw_mode().context("failed to enable raw terminal mode")?;
-    let result = recording_control_loop(&paused);
+    let result = recording_control_loop(&paused, console);
     disable_raw_mode().context("failed to disable raw terminal mode")?;
     result
 }
 
 /// Simulates the pre-record and record UX without a microphone (dry-run only).
-fn dry_run_recording_phase(immediate: bool) -> Result<()> {
-    eprintln!("Dry-run: no microphone (simulated).");
+fn dry_run_recording_phase(immediate: bool, console: Console) -> Result<()> {
+    console.dry_run("no microphone (simulated).");
 
     if immediate {
-        eprintln!("Ready — dry-run recording now. Esc stop · Enter or Space pause/unpause");
+        console.controls("Ready — dry-run recording now. Esc stop · Enter or Space pause/unpause");
     } else {
-        eprintln!("Controls: Enter start · Esc stop · Enter or Space pause/unpause");
-        wait_enter_prompt("Press Enter to start recording… ")?;
+        console.controls("Controls: Enter start · Esc stop · Enter or Space pause/unpause");
+        wait_enter_prompt("Press Enter to start recording… ", console)?;
     }
 
-    eprintln!("Dry-run recording… Esc to stop · Enter or Space to pause/unpause");
+    console.active(
+        "Dry-run recording…",
+        Some("Esc to stop · Enter or Space to pause/unpause"),
+    );
 
     struct ActiveTimer {
         paused: bool,
@@ -267,10 +276,7 @@ fn dry_run_recording_phase(immediate: bool) -> Result<()> {
             let whole = secs.floor() as u64;
             if !timer.paused && last_whole_sec != Some(whole) {
                 last_whole_sec = Some(whole);
-                eprintln!(
-                    "Dry-run · {} elapsed · Esc stop · Enter/Space pause",
-                    format_duration(secs)
-                );
+                console.dry_run_progress(&format_duration(secs));
             }
 
             if event::poll(Duration::from_millis(50)).context("failed to poll keyboard")? {
@@ -283,12 +289,9 @@ fn dry_run_recording_phase(immediate: bool) -> Result<()> {
                         KeyCode::Enter | KeyCode::Char(' ') => {
                             timer.toggle_pause();
                             if timer.paused {
-                                eprintln!(
-                                    "Paused · {}",
-                                    format_duration(timer.active_secs())
-                                );
+                                console.paused_with_duration(&format_duration(timer.active_secs()));
                             } else {
-                                eprintln!("Resumed");
+                                console.resumed();
                             }
                         }
                         _ => {}
@@ -302,8 +305,11 @@ fn dry_run_recording_phase(immediate: bool) -> Result<()> {
     result
 }
 
-fn recording_control_loop(paused: &Arc<AtomicBool>) -> Result<()> {
-    eprintln!("Recording… Enter or Escape to stop · Space to pause/unpause");
+fn recording_control_loop(paused: &Arc<AtomicBool>, console: Console) -> Result<()> {
+    console.active(
+        "Recording…",
+        Some("Enter or Escape to stop · Space to pause/unpause"),
+    );
 
     loop {
         if event::poll(Duration::from_millis(50)).context("failed to poll keyboard")? {
@@ -317,9 +323,9 @@ fn recording_control_loop(paused: &Arc<AtomicBool>) -> Result<()> {
                         let now_paused = !paused.load(Ordering::Relaxed);
                         paused.store(now_paused, Ordering::Relaxed);
                         if now_paused {
-                            eprintln!("Paused");
+                            console.paused();
                         } else {
-                            eprintln!("Resumed");
+                            console.resumed();
                         }
                     }
                     _ => {}
@@ -337,20 +343,20 @@ fn wav_duration_secs(wav: &[u8]) -> Result<f64> {
     Ok(frames / spec.sample_rate as f64)
 }
 
-fn record_wav(start_immediately: bool) -> Result<Vec<u8>> {
+fn record_wav(start_immediately: bool, console: Console) -> Result<Vec<u8>> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
         .context("no default input device (microphone) found")?;
 
     let device_name = device.name().unwrap_or_else(|_| "unknown".into());
-    eprintln!("Using input device: {device_name}");
+    console.context_device(&device_name);
 
     if start_immediately {
-        eprintln!("Ready — recording now. Enter/Esc stop · Space pause");
+        console.controls("Ready — recording now. Enter/Esc stop · Space pause");
     } else {
-        eprintln!("Controls: Enter start · Enter/Esc stop · Space pause");
-        wait_enter_prompt("Press Enter to start recording… ")?;
+        console.controls("Controls: Enter start · Enter/Esc stop · Space pause");
+        wait_enter_prompt("Press Enter to start recording… ", console)?;
     }
 
     let config = device
@@ -362,10 +368,16 @@ fn record_wav(start_immediately: bool) -> Result<Vec<u8>> {
     let samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
     let paused = Arc::new(AtomicBool::new(false));
 
-    let stream = build_input_stream(&device, config, Arc::clone(&samples), Arc::clone(&paused))?;
+    let stream = build_input_stream(
+        &device,
+        config,
+        Arc::clone(&samples),
+        Arc::clone(&paused),
+        console,
+    )?;
     stream.play().context("failed to start audio stream")?;
 
-    run_recording_controls(paused)?;
+    run_recording_controls(paused, console)?;
     drop(stream);
 
     let samples = samples
@@ -383,11 +395,12 @@ fn build_input_stream(
     config: SupportedStreamConfig,
     samples: Arc<Mutex<Vec<f32>>>,
     paused: Arc<AtomicBool>,
+    console: Console,
 ) -> Result<cpal::Stream> {
     let sample_format = config.sample_format();
     let stream_config: cpal::StreamConfig = config.clone().into();
 
-    let err_fn = |err| eprintln!("audio stream error: {err}");
+    let err_fn = move |err: cpal::StreamError| console.stream_error(&format!("{err}"));
 
     let stream = match sample_format {
         SampleFormat::F32 => {
