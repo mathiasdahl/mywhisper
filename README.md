@@ -47,6 +47,18 @@ You do **not** need Rust or a compiler. Use a pre-built binary from [GitHub Rele
 - Hints and status (device name, recording length, estimated cost) go to **stderr**—the “diagnostic” stream in the terminal.
 - The **transcript** goes to **stdout** by default, so you can pipe it to a file: `.\mywhisper.exe > notes.txt`
 - Each real recording also saves matching `.wav` and `.txt` files under `%LOCALAPPDATA%\mywhisper\recordings\` (macOS: `~/Library/Application Support/mywhisper/recordings/`).
+- Status lines on stderr use **semantic colors** when stderr is a TTY (Windows Terminal, PowerShell, or **cmd.exe** on Windows 10/11 with virtual-terminal support; Terminal.app, iTerm2 and other macOS/Linux terminals). Transcript text on stdout is never colored, so piping stays clean.
+
+#### Terminal colors
+
+| Setting | Behavior |
+|---------|----------|
+| `--color auto` (default) | Color when stderr is an interactive terminal and `NO_COLOR` is not set |
+| `--color never` | Plain text |
+| `--color always` | ANSI color on stderr even when redirected (e.g. logging to a file) |
+| `NO_COLOR` (any value) | Plain text when `--color` is `auto`; use `--color always` to override |
+
+Disable colors in a session: `$env:NO_COLOR = '1'` (PowerShell) or `set NO_COLOR=1` (cmd); on macOS/Linux, `export NO_COLOR=1`.
 
 ### Typical session (interactive)
 
@@ -168,6 +180,7 @@ Terminal's `do script` runs your normal login shell, so `OPENROUTER_API_KEY` fro
 | `--clipboard` | Copy transcript to the system clipboard |
 | `--dry-run` | No mic and no API; simulates record and uses mock text (`OPENROUTER_API_KEY` not required) |
 | `--dry-run-text <TEXT>` | Transcript for `--dry-run` (default: `[dry-run] Mock transcript for UI testing.`) |
+| `--color <auto\|always\|never>` | When to color stderr (default: `auto`) |
 | `-h`, `--help` | Print usage |
 
 With `-y` and no `--stdout` / `--clipboard`, delivery uses the same default as stdout and skips the **s** / **c** / **q** prompt.

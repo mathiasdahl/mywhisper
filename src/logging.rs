@@ -1,3 +1,4 @@
+use crate::console::Console;
 use anyhow::{Context, Result};
 use chrono::Local;
 use std::fs;
@@ -8,7 +9,7 @@ pub struct SessionLog {
 }
 
 impl SessionLog {
-    pub fn save_recording(wav_bytes: &[u8]) -> Result<Self> {
+    pub fn save_recording(wav_bytes: &[u8], console: Console) -> Result<Self> {
         let dir = log_directory()?;
         fs::create_dir_all(&dir).with_context(|| format!("failed to create log dir {}", dir.display()))?;
 
@@ -18,16 +19,21 @@ impl SessionLog {
             .with_context(|| format!("failed to write recording {}", wav_path.display()))?;
 
         let txt_path = dir.join(format!("{stem}.txt"));
-        eprintln!("Saved recording: {}", wav_path.display());
+        console.saved(
+            "Saved recording:",
+            &wav_path.display().to_string(),
+        );
 
-        let _ = wav_path;
         Ok(Self { txt_path })
     }
 
-    pub fn save_transcript(&self, text: &str) -> Result<()> {
+    pub fn save_transcript(&self, text: &str, console: Console) -> Result<()> {
         fs::write(&self.txt_path, text)
             .with_context(|| format!("failed to write transcript {}", self.txt_path.display()))?;
-        eprintln!("Saved transcript: {}", self.txt_path.display());
+        console.saved(
+            "Saved transcript:",
+            &self.txt_path.display().to_string(),
+        );
         Ok(())
     }
 }

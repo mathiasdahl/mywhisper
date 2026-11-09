@@ -31,11 +31,3 @@ pub fn exit_on_ctrl_c(key: &KeyEvent) {
         std::process::exit(130);
     }
 }
-
-/// `eprintln!` for use while raw mode is on: Unix raw mode does not translate `\n` to `\r\n`.
-macro_rules! rawln {
-    ($($arg:tt)*) => {
-        eprint!("{}\r\n", format!($($arg)*))
-    };
-}
-pub(crate) use rawln;
